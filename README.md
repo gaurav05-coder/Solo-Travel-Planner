@@ -1,1 +1,0 @@
-# Solo-Travel-Planner
