@@ -15,6 +15,9 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/plan" element={<Plan />} />
         <Route path="/itinerary" element={<Itinerary />} />
+<Route path="/itinerary/:tripId" element={<Itinerary />} />
+
+
         <Route path="/saved" element={<SavedTrips />} />
         <Route path="/trip/:id" element={<TripDetails />} />
         <Route path="/login" element={<Login />} />

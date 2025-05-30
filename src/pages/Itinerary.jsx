@@ -1,35 +1,84 @@
-import { useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { db, auth } from "../firebase";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  doc,
+  getDoc,
+} from "firebase/firestore";
 import ItineraryDay from "../components/ItineraryDay";
-
-const dummyItinerary = [
-  {
-    day: 1,
-    date: "Day 1",
-    activities: ["Arrive at destination", "Check in to hotel", "Explore city center"]
-  },
-  {
-    day: 2,
-    date: "Day 2",
-    activities: ["Visit main museum", "Lunch at local cafe", "Evening walk in park"]
-  },
-  {
-    day: 3,
-    date: "Day 3",
-    activities: ["Day trip to nearby town", "Try local food", "Night market"]
-  }
-];
+import Map from "../components/Map";
+import getCoordinates from "../utils/getCoordinates"; // helper we'll write
 
 export default function Itinerary() {
-  const location = useLocation();
+  const { tripId } = useParams();
   const navigate = useNavigate();
-  const [itinerary, setItinerary] = useState(dummyItinerary);
+  const [trip, setTrip] = useState(null);
+  const [itinerary, setItinerary] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [mapMarkers, setMapMarkers] = useState([]);
+
+  useEffect(() => {
+    if (!tripId) return;
+
+    const fetchTrip = async () => {
+      const tripRef = doc(db, "trips", tripId);
+      const tripSnap = await getDoc(tripRef);
+      if (tripSnap.exists()) {
+        const tripData = tripSnap.data();
+        setTrip(tripData);
+        generateAIItinerary(tripData);
+      } else {
+        alert("Trip not found.");
+        navigate("/plan");
+      }
+    };
+
+    fetchTrip();
+  }, [tripId]);
+
+  async function generateAIItinerary(trip) {
+    setLoading(true);
+    try {
+      const payload = {
+        destination: trip.destination,
+        interests: trip.interests,
+        startDate: trip.startDate,
+        endDate: trip.endDate,
+      };
+  
+      // Declare and assign response here:
+      const response = await fetch("http://localhost:5001/generate-itinerary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+  
+      if (!response.ok) throw new Error("AI itinerary generation failed");
+  
+      const data = await response.json();
+  
+      if (!Array.isArray(data.itinerary)) throw new Error("Itinerary data invalid");
+  
+      setItinerary(data.itinerary);
+  
+      // Rest of your code...
+    } catch (error) {
+      console.error("Error generating itinerary:", error);
+      alert("AI failed to generate itinerary.");
+    } finally {
+      setLoading(false);
+    }
+  }
+  
 
   function handleAddActivity(dayIdx) {
     const activity = prompt("Enter new activity:");
     if (activity) {
-      setItinerary(itinerary => {
-        const copy = [...itinerary];
+      setItinerary((prev) => {
+        const copy = [...prev];
         copy[dayIdx].activities.push(activity);
         return copy;
       });
@@ -39,8 +88,8 @@ export default function Itinerary() {
   function handleEditActivity(dayIdx, actIdx) {
     const activity = prompt("Edit activity:", itinerary[dayIdx].activities[actIdx]);
     if (activity) {
-      setItinerary(itinerary => {
-        const copy = [...itinerary];
+      setItinerary((prev) => {
+        const copy = [...prev];
         copy[dayIdx].activities[actIdx] = activity;
         return copy;
       });
@@ -49,31 +98,64 @@ export default function Itinerary() {
 
   function handleDeleteActivity(dayIdx, actIdx) {
     if (window.confirm("Delete this activity?")) {
-      setItinerary(itinerary => {
-        const copy = [...itinerary];
+      setItinerary((prev) => {
+        const copy = [...prev];
         copy[dayIdx].activities.splice(actIdx, 1);
         return copy;
       });
     }
   }
 
-  function handleSaveTrip() {
-    // fake saving, just go to saved trips
-    navigate("/saved");
+  async function handleSaveTrip() {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        alert("You must be logged in to save your trip.");
+        return;
+      }
+
+      const tripToSave = {
+        ...trip,
+        itinerary,
+        createdAt: serverTimestamp(),
+      };
+
+      const userTripsRef = collection(db, "users", user.uid, "trips");
+      await addDoc(userTripsRef, tripToSave);
+
+      alert("Trip saved successfully!");
+      navigate("/saved");
+    } catch (error) {
+      console.error("Error saving trip:", error);
+      alert("Failed to save trip.");
+    }
+  }
+
+  if (loading || !trip) {
+    return <div className="text-center mt-20">Generating your itinerary...</div>;
   }
 
   return (
     <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-8 mt-8">
       <h2 className="text-2xl font-bold mb-6 text-blue-700 text-center">Your Itinerary</h2>
+
       {itinerary.map((day, i) => (
         <ItineraryDay
           key={i}
           day={day}
           onAdd={() => handleAddActivity(i)}
-          onEdit={actIdx => handleEditActivity(i, actIdx)}
-          onDelete={actIdx => handleDeleteActivity(i, actIdx)}
+          onEdit={(actIdx) => handleEditActivity(i, actIdx)}
+          onDelete={(actIdx) => handleDeleteActivity(i, actIdx)}
         />
       ))}
+
+      {mapMarkers.length > 0 && (
+        <div className="mt-8">
+          <h3 className="text-xl font-semibold mb-4 text-blue-600">Map View</h3>
+          <Map markers={mapMarkers} />
+        </div>
+      )}
+
       <button
         className="mt-8 w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition"
         onClick={handleSaveTrip}

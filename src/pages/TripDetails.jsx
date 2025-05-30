@@ -6,21 +6,34 @@ import { db } from "../firebase";
 export default function TripDetails() {
   const { id } = useParams();
   const [trip, setTrip] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function fetchTrip() {
-      const docRef = doc(db, "trips", id);
-      const docSnap = await getDoc(docRef);
+      setLoading(true);
+      try {
+        const docRef = doc(db, "trips", id);
+        const docSnap = await getDoc(docRef);
 
-      if (docSnap.exists()) {
-        setTrip(docSnap.data());
-      } else {
+        if (docSnap.exists()) {
+          setTrip(docSnap.data());
+        } else {
+          setTrip(null);
+        }
+      } catch (error) {
+        console.error("Error fetching trip:", error);
         setTrip(null);
+      } finally {
+        setLoading(false);
       }
     }
 
-    fetchTrip();
+    if (id) fetchTrip();
   }, [id]);
+
+  if (loading) {
+    return <p className="text-center mt-8 text-gray-600">Loading trip details...</p>;
+  }
 
   if (!trip) {
     return <p className="text-center mt-8 text-red-500">Trip not found.</p>;
