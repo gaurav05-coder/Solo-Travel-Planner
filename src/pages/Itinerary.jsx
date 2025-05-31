@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { db, auth } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 import {
   collection,
   addDoc,
@@ -9,35 +10,53 @@ import {
   getDoc,
 } from "firebase/firestore";
 import ItineraryDay from "../components/ItineraryDay";
-import Map from "../components/Map";
-import getCoordinates from "../utils/getCoordinates"; // helper we'll write
+// import Map from "../components/Map";
+// import getCoordinates from "../utils/getCoordinates";
 
 export default function Itinerary() {
+  const { user } = useAuth();
   const { tripId } = useParams();
   const navigate = useNavigate();
   const [trip, setTrip] = useState(null);
   const [itinerary, setItinerary] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [mapMarkers, setMapMarkers] = useState([]);
+  // const [mapMarkers, setMapMarkers] = useState([]);
 
   useEffect(() => {
-    if (!tripId) return;
-
+    if (!tripId || !user) return;
+  
     const fetchTrip = async () => {
-      const tripRef = doc(db, "trips", tripId);
-      const tripSnap = await getDoc(tripRef);
-      if (tripSnap.exists()) {
+      try {
+        // Try to get from user-specific trips
+        const userTripRef = doc(db, "users", user.uid, "trips", tripId);
+        let tripSnap = await getDoc(userTripRef);
+  
+        // If not found, fall back to top-level trips
+        if (!tripSnap.exists()) {
+          const generalTripRef = doc(db, "trips", tripId);
+          tripSnap = await getDoc(generalTripRef);
+        }
+  
+        // Still not found? Show error and redirect
+        if (!tripSnap.exists()) {
+          alert("Trip not found.");
+          navigate("/plan");
+          return;
+        }
+  
         const tripData = tripSnap.data();
         setTrip(tripData);
         generateAIItinerary(tripData);
-      } else {
-        alert("Trip not found.");
+      } catch (error) {
+        console.error("Error fetching trip:", error);
+        alert("Failed to load trip data.");
         navigate("/plan");
       }
     };
-
+  
     fetchTrip();
-  }, [tripId]);
+  }, [tripId, user]);
+  
 
   async function generateAIItinerary(trip) {
     setLoading(true);
@@ -48,23 +67,37 @@ export default function Itinerary() {
         startDate: trip.startDate,
         endDate: trip.endDate,
       };
-  
-      // Declare and assign response here:
+
       const response = await fetch("http://localhost:5001/generate-itinerary", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-  
+
       if (!response.ok) throw new Error("AI itinerary generation failed");
-  
+
       const data = await response.json();
-  
       if (!Array.isArray(data.itinerary)) throw new Error("Itinerary data invalid");
-  
+
       setItinerary(data.itinerary);
-  
-      // Rest of your code...
+
+      /*
+      const markers = [];
+      for (let i = 0; i < data.itinerary.length; i++) {
+        const dayObj = data.itinerary[i];
+        for (let activity of dayObj.activities) {
+          const coords = await getCoordinates(activity, trip.destination);
+          if (coords) {
+            markers.push({
+              day: dayObj.day,
+              activity,
+              coords,
+            });
+          }
+        }
+      }
+      setMapMarkers(markers);
+      */
     } catch (error) {
       console.error("Error generating itinerary:", error);
       alert("AI failed to generate itinerary.");
@@ -72,7 +105,6 @@ export default function Itinerary() {
       setLoading(false);
     }
   }
-  
 
   function handleAddActivity(dayIdx) {
     const activity = prompt("Enter new activity:");
@@ -149,12 +181,13 @@ export default function Itinerary() {
         />
       ))}
 
-      {mapMarkers.length > 0 && (
+      {/* Map commented out */}
+      {/* {mapMarkers.length > 0 && (
         <div className="mt-8">
           <h3 className="text-xl font-semibold mb-4 text-blue-600">Map View</h3>
           <Map markers={mapMarkers} />
         </div>
-      )}
+      )} */}
 
       <button
         className="mt-8 w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition"

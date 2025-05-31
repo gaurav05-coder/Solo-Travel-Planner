@@ -1,23 +1,37 @@
-// src/components/Map.jsx
-import React from "react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
+import L from "leaflet";
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-const LOCATIONIQ_API_KEY = import.meta.env.VITE_LOCATIONIQ_API_KEY;
+// Fix default icon issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+});
 
-export default function Map({ center, places }) {
-  if (!center || !center.lat || !center.lng || !Array.isArray(places)) return null;
+export default function Map({ markers }) {
+  if (!markers.length) return null;
 
-  // Generate markers
-  const markers = places
-    .map((place) => `${place.lat},${place.lng}`)
-    .join("|");
-
-  const mapUrl = `https://maps.locationiq.com/v3/staticmap?key=${LOCATIONIQ_API_KEY}&center=${center.lat},${center.lng}&zoom=13&size=600x300&markers=${markers}`;
+  const position = markers[0]?.coords;
 
   return (
-    <img
-      src={mapUrl}
-      alt="Map"
-      className="w-full mt-4 rounded-lg border"
-    />
+    <MapContainer center={position} zoom={13} className="h-96 w-full rounded-lg z-0">
+      <TileLayer
+        attribution='© <a href="https://locationiq.com/">LocationIQ</a>'
+        url={`https://tile.openstreetmap.org/{z}/{x}/{y}.png`}
+      />
+      {markers.map((marker, idx) => (
+        <Marker key={idx} position={marker.coords}>
+          <Popup>
+            <strong>{marker.day}</strong><br />
+            {marker.activity}
+          </Popup>
+        </Marker>
+      ))}
+    </MapContainer>
   );
 }
