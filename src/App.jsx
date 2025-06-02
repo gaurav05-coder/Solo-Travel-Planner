@@ -7,6 +7,7 @@ import SavedTrips from "./pages/SavedTrips";
 import TripDetails from "./pages/TripDetails";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import Dashboard from "./pages/Dashboard";
 
 export default function App() {
   return (
@@ -16,7 +17,7 @@ export default function App() {
         <Route path="/plan" element={<Plan />} />
         <Route path="/itinerary" element={<Itinerary />} />
 <Route path="/itinerary/:tripId" element={<Itinerary />} />
-
+<Route path="/dashboard" element={<Dashboard />} />
 
         <Route path="/saved" element={<SavedTrips />} />
         <Route path="/trip/:id" element={<TripDetails />} />

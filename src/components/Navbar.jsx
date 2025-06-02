@@ -41,6 +41,8 @@ export default function Navbar() {
               </Link>
             </li>
           ))}
+          <Link to="/dashboard" className="text-sm text-blue-600 hover:underline">Dashboard</Link>
+
           <li>
             {user ? (
               <button
