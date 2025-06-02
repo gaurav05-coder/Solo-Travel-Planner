@@ -2,10 +2,14 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
-const axios = require("axios");
+const { CohereClient } = require("cohere-ai");
+const cohere = new CohereClient({ token: process.env.CO_API_KEY });
 
 const app = express();
 const PORT = process.env.PORT || 5001;
+
+// Store chat context per sessionId
+const chatContexts = new Map();
 
 app.use(
   cors({
@@ -17,157 +21,84 @@ app.use(
 
 app.use(express.json());
 
-// ✅ Corrected Cohere call using messages array
-// Simpler Cohere completion
-async function generateItinerary(prompt) {
-  try {
-    const response = await axios.post(
-      "https://api.cohere.ai/v1/chat",
-      {
-        model: "command-xlarge-nightly",
-        temperature: 0.8,
-        max_tokens: 1000,
-        chat_history: [],
-        message: prompt,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.COHERE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 60000,
-      }
-    );
+console.log("Loaded API key:", process.env.CO_API_KEY);
 
-    return response.data.text;
-  } catch (error) {
-    console.error("🔥 Axios error details:", error.response?.data || error.message);
-    throw error;
-  }
-}
-
-
-
-
-console.log("Loaded API key:", process.env.COHERE_API_KEY);
-
-// Health check route
 app.get("/", (req, res) => {
   res.send("Server is working!");
 });
 
-// Main AI generation route
-app.post("/generate-itinerary", async (req, res) => {
+app.post('/chatbot', async (req, res) => {
   try {
-    const { destination, startDate, endDate, interests, budget } = req.body;
+    const { sessionId, message } = req.body;
 
-    if (!destination || !startDate || !endDate || !interests) {
-      return res.status(400).json({ error: "Missing required fields" });
+    if (!sessionId || !message) {
+      return res.status(400).json({ error: 'Missing sessionId or message' });
     }
 
-    const daysCount =
-      Math.ceil(
-        (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)
-      ) + 1;
+    // Get or initialize chat context array for this sessionId
+    let context = chatContexts.get(sessionId) || [];
 
-      const prompt = `
-      Create a detailed ${daysCount}-day travel itinerary for a solo traveler visiting ${destination}. The traveler is interested in ${interests.join(", ")}.
-      
-      **Important:**
-      - Respond **only** with a JSON array.
-      - Do **NOT** include any explanations, introductions, or extra text.
-      - The JSON must be an array of objects.
-      - Each object must have:
-        - a "day" field (e.g., "Day 1")
-        - an "activities" field which is an array of 3 to 5 activity descriptions (strings) for that day.
-      
-      Example format you must follow exactly:
-      
-      [
-        {
-          "day": "Day 1",
-          "activities": [
-            "Visit the main museum",
-            "Have lunch at a local cafe",
-            "Walk through the historic district"
-          ]
-        },
-        {
-          "day": "Day 2",
-          "activities": [
-            "Explore the art gallery",
-            "Try local street food",
-            "Visit the city park"
-          ]
-        }
-      ]
-      
-      Please ensure the output is valid JSON and contains no extra characters or text outside the JSON array.
-      `;
-      
+    // Add user message to context
+    context.push(`User: ${message}`);
 
-    const rawText = await generateItinerary(prompt);
+    // Keep only last 6 messages to limit context size (3 user + 3 bot)
+    if (context.length > 6) context.shift();
 
-    // After receiving rawText from AI
-let itineraryJson;
+    // Convert to Cohere format
+    const chatHistory = context.map(line => {
+      if (line.startsWith('User: ')) return { role: 'USER', message: line.replace('User: ', '') };
+      if (line.startsWith('AI Travel Assistant: ')) return { role: 'CHATBOT', message: line.replace('AI Travel Assistant: ', '') };
+      return null;
+    }).filter(Boolean);
 
-try {
-  // Try to extract JSON from AI response by detecting the first '{' or '['
-  const jsonStart = rawText.indexOf("[");
-  const jsonEnd = rawText.lastIndexOf("]") + 1;
+    // Set preamble to define assistant behavior
+    const preamble = `
+    You are a helpful, friendly, and knowledgeable **Personal AI Travel Assistant**. 
+    
+    You are not a general-purpose AI chatbot and must NEVER introduce yourself as a general assistant or by any other name (e.g., Coral, ChatGPT, etc.). Always identify yourself as a **Personal Travel Assistant** designed to help users with:
+    - planning trips
+    - suggesting places to visit
+    - giving packing advice
+    - sharing safety and visa tips
+    - budgeting
+    - generating day-wise itineraries
+    
+    If the user asks anything outside of travel, politely say you are only trained to help with travel-related topics.
+    
+    Start the conversation with a friendly greeting that explains your role as a **Personal AI Travel Assistant**.
+    `.trim();
 
-  if (jsonStart === -1 || jsonEnd === -1) {
-    throw new Error("No JSON array found in AI response");
-  }
+    const response = await cohere.chat({
+      model: 'command-r-plus',
+      message: message,
+      chatHistory: chatHistory,
+      preamble: preamble,
+      maxTokens: 150,
+      temperature: 0.7,
+    });
 
-  const jsonString = rawText.substring(jsonStart, jsonEnd);
-  itineraryJson = JSON.parse(jsonString);
-} catch (e) {
-  console.error("Error parsing itinerary JSON:", e.message);
-  // Return the raw AI text so frontend can see what happened
-  return res.status(500).json({
-    error: "Failed to parse AI response as JSON.",
-    rawResponse: rawText,
-  });
-}
-
-
-    res.json({ itinerary: itineraryJson });
+    if (response && response.text) {
+      const botReply = response.text.trim();
+      // Add bot reply to context
+      context.push(`AI Travel Assistant: ${botReply}`);
+      // Update map
+      chatContexts.set(sessionId, context);
+      res.json({ reply: botReply });
+    } else {
+      console.error('Cohere response missing text field:', response);
+      res.status(500).json({ error: 'Cohere response missing text field', details: response });
+    }
   } catch (error) {
-    console.error("Itinerary generation failed:", error.message);
-    res.status(500).json({ error: "AI generation failed: " + error.message });
+    console.error('Chatbot error:', error);
+    if (error.response && error.response.body) {
+      console.error('Cohere API error body:', error.response.body);
+      res.status(500).json({ error: error.response.body });
+    } else {
+      res.status(500).json({ error: 'Failed to generate chatbot response' });
+    }
   }
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
 });
-
-// Optional test block
-// if (require.main === module) {
-//   const testPrompt = `Create a 2-day itinerary for a solo traveler visiting Rome interested in history and food. Format the response like this:
-
-// [
-//   {
-//     "day": "Day 1",
-//     "activities": ["Visit the Colosseum", "Eat carbonara", "Walk around Trastevere"]
-//   },
-//   {
-//     "day": "Day 2",
-//     "activities": ["Vatican tour", "Lunch at local trattoria", "Explore Roman Forum"]
-//   }
-// ]`;
-
-//   generateItinerary(testPrompt)
-//     .then((text) => {
-//       console.log("✅ AI response:", text);
-//       process.exit(0);
-//     })
-//     .catch((err) => {
-//       console.error("❌ Error generating itinerary:", err.message || err);
-//       process.exit(1);
-//     });
-// }
-
-
