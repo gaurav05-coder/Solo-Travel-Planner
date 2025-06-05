@@ -11,12 +11,12 @@ export default function ItineraryDay({ day, onAdd, onEdit, onDelete }) {
       const newPhotos = {};
       for (const activity of itineraryActivities) {
         const keywords = extractKeywords(activity);
-        console.log("Photo search query:", keywords);
+
         try {
           const photoUrl = await getPhoto(keywords);
           newPhotos[activity] = photoUrl;
         } catch (err) {
-          console.error(err);
+
           newPhotos[activity] = null; // fallback image or null
         }
       }
@@ -50,13 +50,15 @@ export default function ItineraryDay({ day, onAdd, onEdit, onDelete }) {
             {photos[activity] ? (
               <img
                 src={photos[activity]}
-                alt={activity}
+                alt={`Photo of ${activity}`}
                 className="w-full sm:w-40 h-32 object-cover rounded-xl shadow"
               />
             ) : (
-              <div className="w-full sm:w-40 h-32 bg-gray-200 rounded-xl flex items-center justify-center text-gray-500 text-sm">
-                No Image
-              </div>
+              <img
+                src="https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=400&q=80"
+                alt={`No photo found for ${activity}`}
+                className="w-full sm:w-40 h-32 object-cover rounded-xl shadow opacity-60"
+              />
             )}
 
             {/* Activity Info */}

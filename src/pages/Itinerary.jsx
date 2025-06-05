@@ -2,6 +2,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { db, auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { setDoc } from "firebase/firestore";
+
+
 import {
   collection,
   addDoc,
@@ -14,16 +17,21 @@ import ItineraryDay from "../components/ItineraryDay";
 // import getCoordinates from "../utils/getCoordinates";
 
 export default function Itinerary() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+
   const { tripId } = useParams();
   const navigate = useNavigate();
   const [trip, setTrip] = useState(null);
   const [itinerary, setItinerary] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState("");
   // const [mapMarkers, setMapMarkers] = useState([]);
 
   useEffect(() => {
-    if (!tripId || !user) return;
+    if (!tripId || user === undefined) return; // wait until user loads
+  
   
     const fetchTrip = async () => {
       try {
@@ -39,8 +47,8 @@ export default function Itinerary() {
   
         // Still not found? Show error and redirect
         if (!tripSnap.exists()) {
-          alert("Trip not found.");
-          navigate("/plan");
+          setError("Trip not found.");
+          setTrip(null);
           return;
         }
   
@@ -49,8 +57,10 @@ export default function Itinerary() {
         generateAIItinerary(tripData);
       } catch (error) {
         console.error("Error fetching trip:", error);
-        alert("Failed to load trip data.");
-        navigate("/plan");
+        setError("Failed to load trip data. Please try again.");
+        setTrip(null);
+      } finally {
+        setLoading(false);
       }
     };
   
@@ -60,6 +70,7 @@ export default function Itinerary() {
 
   async function generateAIItinerary(trip) {
     setLoading(true);
+    setError("");
     try {
       const payload = {
         destination: trip.destination,
@@ -81,26 +92,10 @@ export default function Itinerary() {
 
       setItinerary(data.itinerary);
 
-      /*
-      const markers = [];
-      for (let i = 0; i < data.itinerary.length; i++) {
-        const dayObj = data.itinerary[i];
-        for (let activity of dayObj.activities) {
-          const coords = await getCoordinates(activity, trip.destination);
-          if (coords) {
-            markers.push({
-              day: dayObj.day,
-              activity,
-              coords,
-            });
-          }
-        }
-      }
-      setMapMarkers(markers);
-      */
     } catch (error) {
       console.error("Error generating itinerary:", error);
-      alert("AI failed to generate itinerary.");
+      setError("Failed to generate itinerary. Please try again later.");
+      setItinerary([]);
     } finally {
       setLoading(false);
     }
@@ -139,61 +134,83 @@ export default function Itinerary() {
   }
 
   async function handleSaveTrip() {
+    setSaveLoading(true);
+    setSaveSuccess("");
+    setError("");
     try {
       const user = auth.currentUser;
       if (!user) {
-        alert("You must be logged in to save your trip.");
+        setError("You must be logged in to save your trip.");
+        setSaveLoading(false);
         return;
       }
-
       const tripToSave = {
         ...trip,
         itinerary,
         createdAt: serverTimestamp(),
       };
-
       const userTripsRef = collection(db, "users", user.uid, "trips");
-      await addDoc(userTripsRef, tripToSave);
+      const tripRef = doc(db, "users", user.uid, "trips", tripId);
+await setDoc(tripRef, { ...trip, itinerary, updatedAt: serverTimestamp() }, { merge: true });
 
-      alert("Trip saved successfully!");
-      navigate("/saved");
+      setSaveSuccess("Trip saved successfully!");
+      setTimeout(() => {
+        navigate("/saved");
+      }, 1000);
     } catch (error) {
       console.error("Error saving trip:", error);
-      alert("Failed to save trip.");
+      setError("Failed to save trip. Please try again.");
+    } finally {
+      setSaveLoading(false);
     }
   }
 
-  if (loading || !trip) {
-    return <div className="text-center mt-20">Generating your itinerary...</div>;
+  if (authLoading || loading) {
+    return (
+      <div className="flex flex-col items-center mt-24">
+        <span className="inline-block w-12 h-12 border-4 border-blue-400 border-t-transparent rounded-full animate-spin mb-4"></span>
+        <div className="text-xl font-semibold text-blue-600 dark:text-blue-200">Loading user or trip...</div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return <div className="flex flex-col items-center mt-24 text-red-500 font-semibold text-lg">{error}</div>;
+  }
+  if (!trip) {
+    return <div className="flex flex-col items-center mt-24 text-gray-500 font-semibold text-lg">Trip data not found.</div>;
   }
 
   return (
-    <div className="max-w-2xl mx-auto bg-white rounded-lg shadow p-8 mt-8">
-      <h2 className="text-2xl font-bold mb-6 text-blue-700 text-center">Your Itinerary</h2>
+    <div className="max-w-3xl mx-auto glass premium-shadow rounded-2xl p-10 mt-12 mb-16">
+      <h2 className="text-4xl font-extrabold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-blue-600 via-green-400 to-purple-500 dark:from-blue-200 dark:via-purple-400 dark:to-yellow-300 drop-shadow-lg text-center">Your AI-Powered Itinerary</h2>
 
-      {itinerary.map((day, i) => (
-        <ItineraryDay
-          key={i}
-          day={day}
-          onAdd={() => handleAddActivity(i)}
-          onEdit={(actIdx) => handleEditActivity(i, actIdx)}
-          onDelete={(actIdx) => handleDeleteActivity(i, actIdx)}
-        />
-      ))}
+      {saveSuccess && <div className="mb-6 text-green-600 dark:text-green-300 text-center font-bold text-lg animate-pulse">{saveSuccess}</div>}
+      {error && <div className="mb-6 text-red-500 text-center font-bold text-lg">{error}</div>}
 
-      {/* Map commented out */}
-      {/* {mapMarkers.length > 0 && (
-        <div className="mt-8">
-          <h3 className="text-xl font-semibold mb-4 text-blue-600">Map View</h3>
-          <Map markers={mapMarkers} />
-        </div>
-      )} */}
+      <div className="space-y-8">
+        {itinerary.map((day, i) => (
+          <ItineraryDay
+            key={i}
+            day={day}
+            onAdd={() => handleAddActivity(i)}
+            onEdit={(actIdx) => handleEditActivity(i, actIdx)}
+            onDelete={(actIdx) => handleDeleteActivity(i, actIdx)}
+          />
+        ))}
+      </div>
 
       <button
-        className="mt-8 w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition"
+        className="mt-10 w-full bg-gradient-to-r from-blue-600 to-purple-500 text-white py-4 rounded-xl font-bold text-xl shadow-lg hover:scale-105 hover:shadow-2xl transition-all disabled:opacity-60"
         onClick={handleSaveTrip}
+        disabled={saveLoading}
       >
-        Save Trip
+        {saveLoading ? (
+          <span className="flex items-center justify-center">
+            <span className="w-6 h-6 border-4 border-white border-t-transparent rounded-full animate-spin mr-3"></span>
+            Saving...
+          </span>
+        ) : "Save Trip"}
       </button>
     </div>
   );

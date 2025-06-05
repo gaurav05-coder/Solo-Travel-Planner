@@ -8,6 +8,7 @@ export default function SavedTrips() {
   const { user } = useAuth();
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     async function fetchTrips() {
@@ -22,7 +23,7 @@ export default function SavedTrips() {
         }));
         setTrips(tripsData);
       } catch (error) {
-        console.error("Error fetching trips:", error);
+        setError("Failed to load your trips. Please try again later.");
       } finally {
         setLoading(false);
       }
@@ -44,13 +45,25 @@ export default function SavedTrips() {
   }
 
   if (loading) {
-    return <div className="text-center mt-12 text-gray-600">Loading trips...</div>;
+    return (
+      <div className="text-center mt-12">
+        <span className="inline-block w-6 h-6 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mr-2"></span>
+        <span className="text-gray-600">Loading trips...</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center mt-12 text-red-600 font-medium">{error}</div>
+    );
   }
 
   if (trips.length === 0) {
     return (
       <div className="text-center mt-12 text-gray-600">
-        You have no saved trips yet.
+        <span className="block text-3xl mb-2">🧳</span>
+        You have no saved trips yet. Plan your next adventure!
       </div>
     );
   }

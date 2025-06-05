@@ -1,8 +1,7 @@
-// src/utils/getPhoto.js
-
+// WARNING: Do NOT commit API keys in production. Use environment variables for secrets.
 const PEXELS_API_KEY = '5VBCUTlKcTbY8EKu4pkJR2t9sejV31UapB5wnQXAPMaFKsRGbv8hkJcQ';
 
-// Smarter keyword extractor
+// Keyword extractor for activity descriptions
 function extractKeywords(activity) {
     let text = activity.toLowerCase().replace(/[^a-z\s]/g, '');
   
@@ -38,7 +37,7 @@ function extractKeywords(activity) {
   
   
 
-// getPhoto.js
+
 
 export async function getPhoto(keywords) {
     const query = encodeURIComponent(keywords);
@@ -62,7 +61,7 @@ export async function getPhoto(keywords) {
         return null; // fallback logic can go here
       }
     } catch (error) {
-      console.error('Error fetching photo:', error);
+
       throw error;
     }
   }

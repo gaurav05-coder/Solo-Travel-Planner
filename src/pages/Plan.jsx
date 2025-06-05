@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { collection, addDoc, Timestamp } from "firebase/firestore";
 import { db } from "../firebase"; // your firebase config
 import { useAuth } from "../context/AuthContext";
+import { getDoc, doc } from "firebase/firestore";
 
 const interestsList = [
   "Nature",
@@ -20,8 +21,10 @@ export default function Plan() {
   const [destination, setDestination] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [budget, setBudget] = useState(500);
+  const [budget, setBudget] = useState("");
   const [interests, setInterests] = useState([]);
+  const [visibility, setVisibility] = useState("private");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const navigate = useNavigate();
@@ -37,51 +40,89 @@ export default function Plan() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    setError("");
 
+    // Validation
     if (!user) {
-      alert("Please log in to save your trip.");
+      setError("You must be logged in to plan a trip.");
+      return;
+    }
+    if (!destination.trim()) {
+      setError("Destination is required.");
+      return;
+    }
+    if (!startDate || !endDate) {
+      setError("Start and end dates are required.");
+      return;
+    }
+    if (new Date(endDate) < new Date(startDate)) {
+      setError("End date must be after start date.");
+      return;
+    }
+    if (budget < 100) {
+      setError("Budget must be at least $100.");
+      return;
+    }
+    if (interests.length === 0) {
+      setError("Please select at least one interest.");
       return;
     }
 
     setLoading(true);
-
     try {
-      const tripsRef = collection(db, "trips"); // Save trips in top-level 'trips' collection
-      const docRef = await addDoc(tripsRef, {
+      const userTripsRef = collection(db, "users", user.uid, "trips");
+      const tripData = {
         destination,
         startDate,
         endDate,
-        budget,
+        budget: Number(budget),
         interests,
-        createdAt: Timestamp.now(),
-        userId: user.uid,
-      });
-
-      const savedTrip = {
-        id: docRef.id,
-        destination,
-        startDate,
-        endDate,
-        budget,
-        interests,
+        visibility,
+        persona: "Foodie Drifter", // 👈 Add this
+        likes: 0, // 👈 Optional but useful for Explore
+        createdAt: new Date().toISOString(),
       };
+      
+      const docRef = await addDoc(userTripsRef, tripData);
 
-      // Redirect to Itinerary page and pass the saved trip data in state
-      navigate(`/itinerary/${docRef.id}`);
-
-
-
+      // 🛠 Wait until Firestore confirms the trip is available
+      let retries = 0;
+      let tripExists = false;
+      
+      while (retries < 5) {
+        const tripSnap = await getDoc(docRef);
+        if (tripSnap.exists()) {
+          tripExists = true;
+          break;
+        }
+        await new Promise((res) => setTimeout(res, 200)); // wait 200ms before retrying
+        retries++;
+      }
+      
+      if (tripExists) {
+        navigate(`/itinerary/${docRef.id}`);
+      } else {
+        setError("Trip was saved but could not be found. Please try again.");
+      }
+      
     } catch (error) {
       console.error("Error saving trip:", error);
-      alert("Failed to save trip. Please try again.");
+      setError("Failed to save trip. Please try again.");
     } finally {
       setLoading(false);
     }
   }
 
+  if (!user) {
+    return (
+      <div className="bg-white max-w-xl mx-auto p-8 rounded-lg shadow-md mt-8 text-center">
+        <h2 className="text-2xl font-bold mb-6 text-blue-700">Plan Your Trip</h2>
+        <p className="mb-4 text-gray-700">Please <a href="/login" className="text-blue-600 underline">log in</a> to plan and save your trip.</p>
+      </div>
+    );
+  }
+
   return (
-    
-    
     <form
       className="bg-white max-w-xl mx-auto p-8 rounded-lg shadow-md mt-8"
       onSubmit={handleSubmit}
@@ -89,6 +130,7 @@ export default function Plan() {
       <h2 className="text-2xl font-bold mb-6 text-blue-700 text-center">
         Plan Your Trip
       </h2>
+      {error && <div className="mb-4 text-red-600 text-center font-medium">{error}</div>}
       <div className="mb-4">
         <label className="block mb-2 font-medium">Destination</label>
         <input
@@ -121,16 +163,16 @@ export default function Plan() {
           />
         </div>
       </div>
-      <div className="mb-4">
-        <label className="block mb-2 font-medium">Budget ($)</label>
+      <div className="mb-6">
+        <label className="block mb-2 font-medium">Budget (USD)</label>
         <input
-          type="range"
+          type="number"
+          className="w-full border rounded px-3 py-2"
           min="100"
           max="5000"
           step="50"
           value={budget}
           onChange={(e) => setBudget(Number(e.target.value))}
-          className="w-full"
         />
         <div className="text-right text-sm text-gray-600">${budget}</div>
       </div>
@@ -153,12 +195,42 @@ export default function Plan() {
           ))}
         </div>
       </div>
+      <div className="mb-6">
+        <label className="block mb-2 font-medium">Visibility</label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="visibility"
+              value="private"
+              checked={visibility === "private"}
+              onChange={() => setVisibility("private")}
+            />
+            <span>Private</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="visibility"
+              value="public"
+              checked={visibility === "public"}
+              onChange={() => setVisibility("public")}
+            />
+            <span>Public</span>
+          </label>
+        </div>
+      </div>
       <button
         type="submit"
         disabled={loading}
         className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition disabled:opacity-50"
       >
-        {loading ? "Saving..." : "Save Trip & Generate Itinerary"}
+        {loading ? (
+          <span className="flex items-center justify-center">
+            <span className="w-5 h-5 border-4 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+            Saving...
+          </span>
+        ) : "Save Trip & Generate Itinerary"}
       </button>
     </form>
   );

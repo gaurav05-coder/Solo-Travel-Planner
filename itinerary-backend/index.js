@@ -1,9 +1,12 @@
 // itinerary-backend/index.js
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 require("dotenv").config();
 const { CohereClient } = require("cohere-ai");
 const axios = require("axios");
+const { body, validationResult } = require("express-validator");
 
 // Initialize Cohere client with correct env var name
 const cohere = new CohereClient(process.env.COHERE_API_KEY);
@@ -15,16 +18,40 @@ const PORT = process.env.PORT || 5001;
 const chatContexts = new Map();
 
 // Middleware
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://solo-travel-planner-e3620.web.app",
+  "https://solo-travel-planner-e3620.firebaseapp.com"
+];
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type"],
+    credentials: true,
   })
 );
 app.use(express.json());
+app.use(helmet());
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later." },
+  })
+);
 
-console.log("Loaded Cohere API key:", process.env.COHERE_API_KEY);
+// Mask API key in logs
+console.log("Loaded Cohere API key:", process.env.COHERE_API_KEY ? process.env.COHERE_API_KEY.slice(0, 4) + "****" : "NOT SET");
 
 // --- Basic health check ---
 app.get("/", (req, res) => {
@@ -32,19 +59,29 @@ app.get("/", (req, res) => {
 });
 
 // --- Persona classification endpoint ---
-app.post("/persona", (req, res) => {
-  const { interests, budget, duration } = req.body;
-
-  // Basic mock logic for persona
-  const persona =
-    interests.includes("Museums") || interests.includes("History")
-      ? "Culture Explorer"
-      : interests.includes("Beaches") || interests.includes("Nature")
-      ? "Nature Nomad"
-      : "Foodie Drifter";
-
-  res.json({ persona });
-});
+app.post(
+  "/persona",
+  [
+    body("interests").isArray({ min: 1 }).withMessage("Interests must be a non-empty array."),
+    body("budget").optional().isNumeric().withMessage("Budget must be a number."),
+    body("duration").optional().isNumeric().withMessage("Duration must be a number."),
+  ],
+  (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Invalid input", details: errors.array() });
+    }
+    const { interests, budget, duration } = req.body;
+    // Basic mock logic for persona
+    const persona =
+      interests.includes("Museums") || interests.includes("History")
+        ? "Culture Explorer"
+        : interests.includes("Beaches") || interests.includes("Nature")
+        ? "Nature Nomad"
+        : "Foodie Drifter";
+    res.json({ persona });
+  }
+);
 
 // --- Helper: Generate itinerary using Cohere chat endpoint ---
 async function generateItinerary(prompt) {
@@ -75,14 +112,19 @@ async function generateItinerary(prompt) {
 }
 
 // --- Chatbot endpoint ---
-app.post('/chatbot', async (req, res) => {
+app.post(
+  '/chatbot',
+  [
+    body("sessionId").isString().notEmpty().withMessage("sessionId is required."),
+    body("message").isString().notEmpty().withMessage("message is required."),
+  ],
+  async (req, res) => {
   try {
-    const { sessionId, message } = req.body;
-
-    if (!sessionId || !message) {
-      return res.status(400).json({ error: 'Missing sessionId or message' });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Invalid input", details: errors.array() });
     }
-
+    const { sessionId, message } = req.body;
     // Get or initialize chat context array for this sessionId
     let context = chatContexts.get(sessionId) || [];
 
@@ -140,7 +182,7 @@ app.post('/chatbot', async (req, res) => {
     console.error('Chatbot error:', error);
     if (error.response && error.response.body) {
       console.error('Cohere API error body:', error.response.body);
-      res.status(500).json({ error: error.response.body });
+      res.status(500).json({ error: 'AI service error', details: error.response.body });
     } else {
       res.status(500).json({ error: 'Failed to generate chatbot response' });
     }
@@ -149,14 +191,22 @@ app.post('/chatbot', async (req, res) => {
 
 
 // --- Itinerary generation endpoint ---
-app.post("/generate-itinerary", async (req, res) => {
+app.post(
+  "/generate-itinerary",
+  [
+    body("destination").isString().notEmpty().withMessage("Destination is required."),
+    body("startDate").isString().notEmpty().withMessage("Start date is required."),
+    body("endDate").isString().notEmpty().withMessage("End date is required."),
+    body("interests").isArray({ min: 1 }).withMessage("Interests must be a non-empty array."),
+    body("budget").optional().isNumeric().withMessage("Budget must be a number."),
+  ],
+  async (req, res) => {
   try {
-    const { destination, startDate, endDate, interests, budget } = req.body;
-
-    if (!destination || !startDate || !endDate || !interests) {
-      return res.status(400).json({ error: "Missing required fields" });
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: "Invalid input", details: errors.array() });
     }
-
+    const { destination, startDate, endDate, interests, budget } = req.body;
     const daysCount =
       Math.ceil(
         (new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)
@@ -205,26 +255,22 @@ Please ensure the output is valid JSON and contains no extra characters or text 
     try {
       const jsonStart = rawText.indexOf("[");
       const jsonEnd = rawText.lastIndexOf("]") + 1;
-
       if (jsonStart === -1 || jsonEnd === -1) {
         throw new Error("No JSON array found in AI response");
       }
-
       const jsonString = rawText.substring(jsonStart, jsonEnd);
       itineraryJson = JSON.parse(jsonString);
     } catch (e) {
-      console.error("Error generating itinerary:", error.message || error);
-  alert("AI failed to generate itinerary: " + (error.message || error));
+      console.error("Error parsing AI itinerary JSON:", e.message || e);
       return res.status(500).json({
         error: "Failed to parse AI response as JSON.",
         rawResponse: rawText,
       });
     }
-
     res.json({ itinerary: itineraryJson });
   } catch (error) {
     console.error("Itinerary generation failed:", error.message);
-    res.status(500).json({ error: "AI generation failed: " + error.message });
+    res.status(500).json({ error: "AI generation failed", details: error.message });
   }
 });
 
